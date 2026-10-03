@@ -1,16 +1,19 @@
 import streamlit as st
 
+# --- Clinical Optical Engine ---
 def compute_typography_styles(sphere: float, cylinder: float, axis: int, reading_add: float = 0.0) -> dict:
     spherical_equivalent = sphere + (cylinder / 2.0)
     
     base_font_size = 16.0
     base_line_height = 1.5
     
+    # Near reading accommodation: scale font size dynamically
     near_scale = max(0.0, reading_add) * 0.25
     myopic_blur_scale = max(0.0, abs(sphere)) * 0.12 if sphere < -1.5 else 0.0
     total_scale = 1.0 + near_scale + myopic_blur_scale
     final_font_size = round(base_font_size * total_scale, 1)
     
+    # Astigmatic accommodation: contrast and character tracking
     abs_cyl = abs(cylinder)
     if abs_cyl >= 2.0:
         font_weight = 700
@@ -36,6 +39,7 @@ def compute_typography_styles(sphere: float, cylinder: float, axis: int, reading
         "theme": theme
     }
 
+# --- Streamlit Presentation Layer ---
 st.set_page_config(
     page_title="OptiScale | Optical Accessibility",
     page_icon="👁️",
@@ -86,14 +90,22 @@ with col_preview:
     )
 
     preview_html = (
-        f'st.markdown(preview_html, unsafe_allow_html=True)
-
-st.markdown("#### Dynamic CSS Output")
-st.code(
-    f"font-size: {result['font_size_px']};\n"
-    f"font-weight: {result['font_weight']};\n"
-    f"line-height: {result['line_height']};\n"
-    f"letter-spacing: {result['letter_spacing_px']};\n"
-    f"theme: {result['theme']};",
-    language="css"
-)
+        f'<div style="{style_block}">'
+        '<h4 style="margin-top:0; color:inherit;">Ophthalmic Care & Post-Exam Instructions</h4>'
+        '<p>1. Pupil Dilation: Photophobia and transient cycloplegia may persist for 4 to 6 hours. Wear UV-protective sunglasses outdoors.</p>'
+        '<p>2. Progressive Lens Adaptation: Point your nose directly at the object you are viewing when reading fine print.</p>'
+        '<p>3. Red Flag Symptoms: Contact eye triage immediately if you experience sudden onset of flashers, a surge in floaters, or a dark curtain across your peripheral field.</p>'
+        '</div>'
+    )
+    
+    st.markdown(preview_html, unsafe_allow_html=True)
+    
+    st.markdown("#### Dynamic CSS Output")
+    st.code(
+        f"font-size: {result['font_size_px']};\n"
+        f"font-weight: {result['font_weight']};\n"
+        f"line-height: {result['line_height']};\n"
+        f"letter-spacing: {result['letter_spacing_px']};\n"
+        f"theme: {result['theme']};",
+        language="css"
+    )
