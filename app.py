@@ -72,16 +72,28 @@ with col_preview:
     
     theme = result["theme"]
     if theme == "ultra_high_contrast":
-        bg = "#000000"
-        txt = "#FFD700"
-        bdr = "#FFD700"
+        bg, txt, bdr = "#000000", "#FFD700", "#FFD700"
     elif theme == "high_contrast":
-        bg = "#0F172A"
-        txt = "#F8FAFC"
-        bdr = "#38BDF8"
+        bg, txt, bdr = "#0F172A", "#F8FAFC", "#38BDF8"
     else:
-        bg = "#F8FAFC"
-        txt = "#0F172A"
-        bdr = "#CBD5E1"
+        bg, txt, bdr = "#F8FAFC", "#0F172A", "#CBD5E1"
 
-    preview_html = f"""
+    style_block = (
+        f"background-color:{bg}; color:{txt}; padding:24px; border-radius:12px; "
+        f"border:2px solid {bdr}; font-size:{result['font_size_px']}; "
+        f"font-weight:{result['font_weight']}; line-height:{result['line_height']}; "
+        f"letter-spacing:{result['letter_spacing_px']}; font-family:system-ui, sans-serif;"
+    )
+
+    preview_html = (
+        f'st.markdown(preview_html, unsafe_allow_html=True)
+
+st.markdown("#### Dynamic CSS Output")
+st.code(
+    f"font-size: {result['font_size_px']};\n"
+    f"font-weight: {result['font_weight']};\n"
+    f"line-height: {result['line_height']};\n"
+    f"letter-spacing: {result['letter_spacing_px']};\n"
+    f"theme: {result['theme']};",
+    language="css"
+)
