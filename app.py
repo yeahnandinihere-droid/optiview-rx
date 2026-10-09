@@ -25,7 +25,7 @@ def compute_spherical_equivalent(sphere: float, cylinder: float) -> float:
     return round(sphere + (cylinder / 2.0), 2)
 
 def compute_eye_tokens(sphere: float, cylinder: float, axis: int, reading_add: float = 0.0) -> dict:
-    """Calculates typography and accessibility parameters for an individual eye."""
+    """Calculates typography parameters for an individual eye."""
     if not (-20.0 <= sphere <= 15.0):
         raise ValueError(f"Sphere power {sphere}D exceeds physiological boundary limits [-20.0, +15.0].")
     if not (-10.0 <= cylinder <= 0.0):
@@ -71,15 +71,40 @@ def compute_eye_tokens(sphere: float, cylinder: float, axis: int, reading_add: f
         "abs_cyl": abs_cyl
     }
 
+def synthesize_binocular(od: dict, os: dict) -> dict:
+    """Binocular summation & worst-case blur prevention synthesis."""
+    final_font_size = max(od["font_size_num"], os["font_size_num"])
+    final_weight = max(od["font_weight"], os["font_weight"])
+    final_line_height = max(od["line_height"], os["line_height"])
+
+    if od["theme"] == "ultra_high_contrast" or os["theme"] == "ultra_high_contrast":
+        final_theme = "ultra_high_contrast"
+        letter_spacing = 1.2
+    elif od["theme"] == "high_contrast" or os["theme"] == "high_contrast":
+        final_theme = "high_contrast"
+        letter_spacing = 0.6
+    else:
+        final_theme = "standard"
+        letter_spacing = 0.0
+
+    return {
+        "font_size_px": f"{final_font_size}px",
+        "font_size_num": final_font_size,
+        "font_weight": final_weight,
+        "line_height": final_line_height,
+        "letter_spacing_px": f"{letter_spacing}px",
+        "theme": final_theme
+    }
+
 # --- Streamlit Layout ---
 st.set_page_config(
-    page_title="OptiScale | Monocular Optical Accessibility Engine",
+    page_title="OptiScale | Optical Accessibility Engine",
     page_icon="👁",
     layout="wide"
 )
 
 st.title("👁️ OptiScale: Optical Accessibility Engine")
-st.caption("Translates bilateral spectacle prescriptions into calibrated digital typography, toggling directly between Right Eye (OD) and Left Eye (OS).")
+st.caption("Translates bilateral spectacle prescriptions (OD & OS) into a unified, binocularly compensated digital typography interface.")
 
 st.divider()
 
@@ -144,28 +169,14 @@ with col_os:
 
 st.divider()
 
-# --- Compute Engine ---
+# --- Compute Engine (Automated Binocular Synthesis) ---
 try:
     od_tokens = compute_eye_tokens(od_sph, od_cyl, od_axis, od_add)
     os_tokens = compute_eye_tokens(os_sph, os_cyl, os_axis, os_add)
+    active = synthesize_binocular(od_tokens, os_tokens)
 except ValueError as err:
     st.error(f"Input Validation Error: {str(err)}")
     st.stop()
-
-# --- Eye Selection (OD vs OS Only) ---
-st.subheader("Select Eye to Calibrate:")
-view_mode = st.radio(
-    "Choose Active Viewport:",
-    ["Right Eye (OD)", "Left Eye (OS)"],
-    horizontal=True
-)
-
-if view_mode == "Right Eye (OD)":
-    active = od_tokens
-    active_label = "OD (Right Eye)"
-else:
-    active = os_tokens
-    active_label = "OS (Left Eye)"
 
 # --- Theme Color Mapping & Luminance Calculations ---
 if active["theme"] == "ultra_high_contrast":
@@ -184,18 +195,18 @@ wcag_aaa = "✅ PASS (>= 7.0:1)" if contrast_ratio >= 7.0 else "❌ FAIL"
 # Metrics Ribbon
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    st.metric("Active Prescription", active_label)
+    st.metric("Synthesized Sizing", active["font_size_px"])
 with m2:
-    st.metric("Calculated SE", f"{active['spherical_equivalent']:+.2f} D")
+    st.metric("Letter Spacing (Tracking)", active["letter_spacing_px"])
 with m3:
-    st.metric("Font Scale / Tracking", f"{active['font_size_px']} | {active['letter_spacing_px']}")
+    st.metric("WCAG 2.2 Contrast Ratio", f"{contrast_ratio}:1")
 with m4:
-    st.metric("WCAG 2.2 AAA Contrast", f"{contrast_ratio}:1 ({wcag_aaa})")
+    st.metric("WCAG AAA Compliance", wcag_aaa)
 
 # Anisometropia detection
 se_diff = abs(od_tokens["spherical_equivalent"] - os_tokens["spherical_equivalent"])
 if se_diff >= 1.50:
-    st.warning(f"⚠️ Anisometropia Note (|ΔSE| = {se_diff:.2f}D): Substantial difference between OD and OS. Compare both options above to observe individual eye compensation differences.")
+    st.warning(f"⚠️ Anisometropia Detected (|ΔSE| = {se_diff:.2f}D): Substantial difference between OD and OS. The typography has automatically scaled to prevent fatigue on the weaker eye.")
 
 # --- Side-by-Side Comparison ---
 show_comparison = st.checkbox("Show Before / After Comparison", value=True)
@@ -221,7 +232,7 @@ if show_comparison:
         st.caption("Standard 14px static gray text creates high crowding and rapid accommodative fatigue.")
 
     with col_after:
-        st.markdown(f"**OptiScale Calibrated ({active_label})**")
+        st.markdown("**OptiScale Calibrated (Binocularly Compensated)**")
         calibrated_html = (
             f'<div style="background-color:{bg}; color:{txt}; padding:24px; border-radius:12px; '
             f'border:2px solid {bdr}; font-size:{active["font_size_px"]}; font-weight:{active["font_weight"]}; '
@@ -248,13 +259,13 @@ col_export, col_css = st.columns(2, gap="large")
 
 with col_export:
     st.subheader("📄 Patient Care Sheet Export")
-    st.write(f"Download a standalone HTML document pre-baked with the personalized parameters for **{active_label}**.")
+    st.write("Download a standalone HTML document pre-baked with the unified binocular parameters.")
 
     export_html_content = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>OptiScale Calibrated Patient Care Sheet ({active_label})</title>
+  <title>OptiScale Calibrated Patient Care Sheet</title>
   <style>
     body {{
       background-color: {bg};
@@ -287,23 +298,23 @@ with col_export:
   <div class="container">
     {instruction_body}
     <div class="footer">
-      Calibrated by OptiScale Engine | Target: {active_label} | Contrast: {contrast_ratio}:1 (WCAG AAA)
+      Calibrated by OptiScale Engine | Mode: Binocular Compensated | Contrast: {contrast_ratio}:1 (WCAG AAA)
     </div>
   </div>
 </body>
 </html>"""
 
     st.download_button(
-        label=f"📥 Download Patient Care Sheet for {active_label} (.html)",
+        label="📥 Download Calibrated Patient Care Sheet (.html)",
         data=export_html_content,
-        file_name=f"optiscale_{active_label.lower().replace(' ', '_')}.html",
+        file_name="optiscale_patient_care_sheet.html",
         mime="text/html"
     )
 
 with col_css:
     st.subheader("💻 Generated CSS Tokens")
     st.code(
-        f"/* OptiScale CSS Variables for {active_label} */\n"
+        f"/* OptiScale CSS Variables (Binocularly Compensated) */\n"
         f"--rx-font-size: {active['font_size_px']};\n"
         f"--rx-font-weight: {active['font_weight']};\n"
         f"--rx-line-height: {active['line_height']};\n"
