@@ -7,12 +7,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ----------------- UI Header -----------------
 st.title("👓 OptiScale: Optical Accessibility & Typography Engine")
 st.caption("Clinical typography engine translating bilateral spectacle prescriptions (OD/OS) into calibrated, WCAG 2.2 AAA accessible patient portals.")
 st.markdown("---")
 
-# ----------------- Sidebar: Bilateral Prescription Input -----------------
+# --- Bilateral Refraction Inputs (Right Eye & Left Eye) ---
 st.sidebar.header("📋 Patient Refraction Record")
 
 st.sidebar.subheader("Right Eye (OD - Oculus Dexter)")
@@ -41,70 +40,46 @@ display_mode = st.sidebar.radio(
     index=0
 )
 
-# ----------------- Optical Calculations -----------------
-# Spherical Equivalent: SE = SPH + (CYL / 2)
+# --- Optical Calculations ---
 od_se = od_sph + (od_cyl / 2.0)
 os_se = os_sph + (os_cyl / 2.0)
 anisometropia = abs(od_se - os_se)
 
-# Binocular Acuity Compensation: Scale font base on the weaker eye and near add
 max_near_demand = max(od_add, os_add)
 base_font_pt = 16.0
 scaling_factor = 1.0 + (max_near_demand * 0.20) + (max(abs(od_se), abs(os_se)) * 0.05)
 calibrated_font_size = round(base_font_pt * scaling_factor, 1)
 
-# Astigmatic Distortion Compensation: Higher cyl requires increased letter-spacing & font-weight
 max_cyl = max(abs(od_cyl), abs(os_cyl))
 letter_spacing_px = round(0.5 + (max_cyl * 0.6), 2)
 font_weight = 600 if max_cyl >= 1.00 else 400
 
-# Contrast Palettes
 if display_mode == "High-Contrast Dark (WCAG AAA)":
-    bg_color = "#0B0F19"
-    card_bg = "#161E2E"
-    text_color = "#F9FAFB"
-    accent_color = "#38BDF8"
-    border_color = "#374151"
-    contrast_ratio = "18.2:1"
+    card_bg, text_color, accent_color, border_color, contrast_ratio = "#161E2E", "#F9FAFB", "#38BDF8", "#374151", "18.2:1"
 elif display_mode == "High-Contrast Light (WCAG AAA)":
-    bg_color = "#FFFFFF"
-    card_bg = "#F3F4F6"
-    text_color = "#111827"
-    accent_color = "#0284C7"
-    border_color = "#D1D5DB"
-    contrast_ratio = "17.8:1"
+    card_bg, text_color, accent_color, border_color, contrast_ratio = "#F3F4F6", "#111827", "#0284C7", "#D1D5DB", "17.8:1"
 else:
-    bg_color = "#0F172A"
-    card_bg = "#1E293B"
-    text_color = "#E2E8F0"
-    accent_color = "#22D3EE"
-    border_color = "#334155"
-    contrast_ratio = "15.4:1"
+    card_bg, text_color, accent_color, border_color, contrast_ratio = "#1E293B", "#E2E8F0", "#22D3EE", "#334155", "15.4:1"
 
-# ----------------- Analytical Dashboard -----------------
+# --- Metrics Display ---
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-with col_m1:
-    st.metric("OD Spherical Eq.", f"{od_se:.2f} D")
-with col_m2:
-    st.metric("OS Spherical Eq.", f"{os_se:.2f} D")
-with col_m3:
-    st.metric("Anisometropia Gap", f"{anisometropia:.2f} D", delta="High Anisometropia" if anisometropia > 1.0 else "Balanced")
-with col_m4:
-    st.metric("Calibrated Type Size", f"{calibrated_font_size} pt", delta=f"+{round((scaling_factor - 1.0) * 100)}% Scale")
+col_m1.metric("OD Spherical Eq.", f"{od_se:.2f} D")
+col_m2.metric("OS Spherical Eq.", f"{os_se:.2f} D")
+col_m3.metric("Anisometropia Gap", f"{anisometropia:.2f} D", delta="High Anisometropia" if anisometropia > 1.0 else "Balanced")
+col_m4.metric("Calibrated Type Size", f"{calibrated_font_size} pt", delta=f"+{round((scaling_factor - 1.0) * 100)}% Scale")
 
 st.markdown("---")
 
-# ----------------- Calibration Breakdown -----------------
+# --- Clinical Breakdown ---
 c_left, c_right = st.columns([1, 1])
-
 with c_left:
     st.subheader("🔬 Clinical Optical Analysis")
     st.markdown(f"""
     * **Right Eye (OD):** SPH `{od_sph:+.2f}D` | CYL `{od_cyl:.2f}D` @ `{od_axis}°` | ADD `+{od_add:.2f}D`
     * **Left Eye (OS):** SPH `{os_sph:+.2f}D` | CYL `{os_cyl:.2f}D` @ `{os_axis}°` | ADD `+{os_add:.2f}D`
-    * **Astigmatism Tracking Correction:** `{letter_spacing_px}px` letter-spacing applied to reduce letter crowding.
-    * **Weight Reinforcement:** `{font_weight}` (reinforced stroke width against cylindrical blur).
-    * **Luminance Contrast:** Standard verified at `{contrast_ratio}` (Complies with **WCAG 2.2 AAA**).
+    * **Astigmatism Tracking Correction:** `{letter_spacing_px}px` letter-spacing applied.
+    * **Weight Reinforcement:** `{font_weight}` (reinforced stroke width against blur).
+    * **Luminance Contrast:** Verified at `{contrast_ratio}` (**WCAG 2.2 AAA**).
     """)
 
 with c_right:
@@ -119,18 +94,14 @@ with c_right:
 
 st.markdown("---")
 
-# ----------------- Calibrated Patient Portal Live Preview -----------------
+# --- Patient Portal Preview ---
 st.subheader("👁️ Calibrated Discharge Summary View")
-st.caption("Rendered live with the binocularly calibrated optical parameters above:")
-
-portal_preview = f"""
-<div style="background-color: {card_bg}; color: {text_color}; border: 2px solid {border_color}; border-radius: 10px; padding: 28px; font-size: {calibrated_font_size}px; letter-spacing: {letter_spacing_px}px; font-weight: {font_weight}; line-height: 1.6;">
-    <h3 style="color: {accent_color}; margin-top: 0; font-size: {calibrated_font_size * 1.25}px;">POST-OPERATIVE MEDICATION INSTRUCTIONS</h3>
-    <p><strong>Patient Record:</strong> Calibration adjusted for OD: {od_se:+.2f}D / OS: {os_se:+.2f}D</p>
-    <p><strong>1. Prednisolone Acetate 1% Ophthalmic Suspension:</strong> Instill 1 drop into the operative eye four (4) times daily for 7 days. Shake vigorously before use.</p>
+st.markdown(f"""
+<div style="background-color: {card_bg}; color: {text_color}; border: 2px solid {border_color}; border-radius: 10px; padding: 24px; font-size: {calibrated_font_size}px; letter-spacing: {letter_spacing_px}px; font-weight: {font_weight}; line-height: 1.6;">
+    <h3 style="color: {accent_color}; margin-top: 0; font-size: {calibrated_font_size * 1.2}px;">POST-OPERATIVE MEDICATION INSTRUCTIONS</h3>
+    <p><strong>Refraction Calibration:</strong> OD: {od_se:+.2f}D | OS: {os_se:+.2f}D</p>
+    <p><strong>1. Prednisolone Acetate 1% Suspension:</strong> Instill 1 drop into the operative eye four (4) times daily for 7 days. Shake vigorously before use.</p>
     <p><strong>2. Moxifloxacin 0.5% Solution:</strong> Instill 1 drop into the operative eye three (3) times daily for 7 days.</p>
-    <p style="margin-bottom: 0; color: {accent_color}; font-size: {calibrated_font_size * 0.9}px;"><em>If you experience acute pain, sudden loss of vision, or flashes of light, contact the clinical emergency desk immediately.</em></p>
+    <p style="margin-bottom: 0; color: {accent_color}; font-size: {calibrated_font_size * 0.9}px;"><em>If you experience sudden loss of vision or flashes of light, contact the clinical emergency desk immediately.</em></p>
 </div>
-"""
-
-st.markdown(portal_preview, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
