@@ -1,3 +1,11 @@
+import streamlit as st
+
+st.set_page_config(
+    page_title="OptiScale | Optical Accessibility",
+    page_icon="👓",
+    layout="wide"
+)
+
 st.html("""
 <head>
   <meta name="description" content="OptiScale: Clinical Ophthalmic Accessibility & Typography Engine.">
