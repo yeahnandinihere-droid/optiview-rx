@@ -1,4 +1,3 @@
-
 import html
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -551,21 +550,144 @@ st.caption(
 )
 
 
+
+
 # ============================================================
-# 9. RESEARCH NOTES AND NEXT EXPERIMENTS
+# 9. EXPLORATORY COMPUTATIONAL OPTICS ENGINE
+# ============================================================
+
+st.markdown("---")
+st.header("5. Exploratory Computational Optics Engine")
+st.warning(
+    "Research simulation only. This is a simplified, monochromatic "
+    "defocus/PSF model using an elliptical Gaussian approximation. "
+    "It is not an individualized eye model, clinical retinal simulation, "
+    "validated correction method, or evidence of spectacle-free reading."
+)
+
+try:
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from optics import (
+        make_astigmatic_psf,
+        apply_psf,
+        regularized_preemphasis,
+        mtf_curve,
+        image_sharpness_score,
+    )
+
+    st.write(
+        "Select one eye and display assumptions. The model uses the two "
+        "principal meridians represented by sphere and sphere+cylinder. "
+        "Prescription sign is reduced to blur magnitude in this exploratory model."
+    )
+
+    eye_choice = st.radio("Eye to simulate", ["Right eye (OD)", "Left eye (OS)"], horizontal=True)
+    if eye_choice == "Right eye (OD)":
+        sim_sph, sim_cyl, sim_axis = od_sph, od_cyl, od_axis
+    else:
+        sim_sph, sim_cyl, sim_axis = os_sph, os_cyl, os_axis
+
+    sim_col1, sim_col2, sim_col3 = st.columns(3)
+    with sim_col1:
+        pupil_mm = st.slider("Assumed pupil diameter (mm)", 1.5, 6.0, 3.0, 0.1)
+    with sim_col2:
+        viewing_mm = st.slider("Viewing distance (mm)", 200, 700, 400, 10)
+    with sim_col3:
+        pixel_pitch_um = st.slider("Display pixel pitch (µm)", 35, 120, 55, 1)
+
+    psf, psf_info = make_astigmatic_psf(
+        sim_sph, sim_cyl, sim_axis,
+        pupil_diameter_mm=pupil_mm,
+        viewing_distance_mm=viewing_mm,
+        pixel_pitch_um=pixel_pitch_um,
+    )
+
+    sample = create_sample_image().convert("L")
+    sample_array = np.asarray(sample, dtype=np.uint8)
+    simulated_blur = apply_psf(sample_array, psf)
+
+    st.subheader("A. Simplified point spread function (PSF)")
+    psf_col, info_col = st.columns([1, 2])
+    with psf_col:
+        st.image(psf, caption="Normalised model PSF", clamp=True, use_container_width=True)
+    with info_col:
+        st.write(f"Parallel-meridian blur sigma: **{psf_info['sigma_parallel_px']:.2f} pixels**")
+        st.write(f"Perpendicular-meridian blur sigma: **{psf_info['sigma_perpendicular_px']:.2f} pixels**")
+        st.write(f"Principal meridional defocus magnitudes: **{psf_info['meridional_defocus_d'][0]:.2f} D** and **{psf_info['meridional_defocus_d'][1]:.2f} D**")
+        st.caption("The prescription axis sets the orientation of the simplified elliptical kernel.")
+
+    st.subheader("B. Simulated retinal-image proxy")
+    st.caption("This is a display-image convolution proxy, not a prediction of an actual person's retinal image.")
+    image_a, image_b = st.columns(2)
+    with image_a:
+        st.image(sample_array, caption="Input sample", use_container_width=True)
+    with image_b:
+        st.image(simulated_blur, caption="After model PSF convolution", use_container_width=True)
+
+    st.subheader("C. Experimental pre-emphasis")
+    st.caption("The filter is applied to the input image, then the same model PSF is applied to that pre-emphasised image. This is a numerical experiment only.")
+    regularization = st.slider("Inverse-filter regularisation", 0.001, 0.20, 0.02, 0.001, format="%.3f")
+    preemphasis_enabled = st.checkbox("Run regularised pre-emphasis experiment", value=False)
+    if preemphasis_enabled:
+        preemphasised = regularized_preemphasis(sample_array, psf, regularization)
+        preemphasis_after_blur = apply_psf(preemphasised, psf)
+        pre_col1, pre_col2 = st.columns(2)
+        with pre_col1:
+            st.image(preemphasised, caption="Pre-emphasised input", use_container_width=True)
+        with pre_col2:
+            st.image(preemphasis_after_blur, caption="Pre-emphasised input after model blur", use_container_width=True)
+        base_score = image_sharpness_score(simulated_blur)
+        experimental_score = image_sharpness_score(preemphasis_after_blur)
+        st.write(f"Blurred baseline sharpness proxy: **{base_score:.2f}**")
+        st.write(f"Pre-emphasis result sharpness proxy: **{experimental_score:.2f}**")
+        st.caption("A higher sharpness proxy is not proof of better legibility or improved human vision; ringing and noise amplification can increase this score.")
+
+    st.subheader("D. Modulation transfer function (MTF) estimate")
+    frequencies, mtf_values = mtf_curve(psf)
+    fig, ax = plt.subplots()
+    ax.plot(frequencies, mtf_values)
+    ax.set_xlabel("Spatial frequency (cycles/pixel)")
+    ax.set_ylabel("MTF")
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Radially averaged MTF of model PSF")
+    ax.grid(True, alpha=0.3)
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.info(
+        "Interpretation boundary: this engine explores how assumed defocus "
+        "parameters affect a simplified image model. It does not establish "
+        "that an ordinary smartphone can overcome refractive error. The next "
+        "research step is validation against an established optical model "
+        "and measured optical/visual data."
+    )
+
+except ImportError as error:
+    st.error(
+        "The computational optics module or one of its dependencies is missing. "
+        "Install the packages listed in requirements.txt. "
+        f"Technical detail: {error}"
+    )
+except Exception as error:
+    st.error(f"The exploratory optics simulation could not run: {error}")
+
+
+# ============================================================
+# 10. RESEARCH NOTES AND NEXT EXPERIMENTS
 # ============================================================
 
 st.markdown("---")
 st.header("5. Computational Optics Research Roadmap")
 
 research_topics = [
-    "Geometric optics and refractive error modelling",
-    "Point Spread Function (PSF)",
-    "Modulation Transfer Function (MTF)",
-    "Wavefront aberration modelling",
-    "Computational image pre-distortion",
-    "Light-field and specialised display technology",
-    "Optical simulation validation"
+    "Validate simplified PSF model against an established optical model",
+    "Compare directional MTF for astigmatic blur",
+    "Add wavefront aberration modelling with appropriate optical data",
+    "Evaluate pre-emphasis stability, ringing and noise amplification",
+    "Compare model outputs with measured optical bench data",
+    "Investigate conventional-display physical feasibility",
+    "Obtain optometry/ophthalmology and optical engineering review"
 ]
 
 for topic in research_topics:
@@ -576,7 +698,7 @@ for topic in research_topics:
 
 
 # ============================================================
-# 10. RESEARCH LIMITATIONS
+# 11. RESEARCH LIMITATIONS
 # ============================================================
 
 st.markdown("---")
@@ -612,7 +734,7 @@ st.info(
 
 
 # ============================================================
-# 11. FOOTER
+# 12. FOOTER
 # ============================================================
 
 st.markdown("---")
