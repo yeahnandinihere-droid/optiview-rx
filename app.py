@@ -27,9 +27,18 @@ st.caption(
 )
 
 st.info(
-    "Research prototype only. This application does not correct "
-    "refractive errors, replace spectacles, diagnose eye conditions, "
-    "or provide clinically validated vision correction."
+    "**Research Purpose and Future Vision**\n\n"
+    "OptiView-Rx is an experimental research project investigating "
+    "whether personalised computational optical compensation can "
+    "enable people with refractive errors to read on conventional "
+    "smartphones without wearing spectacles.\n\n"
+    "The long-term objective is to develop a software-based solution "
+    "that, if successfully developed and scientifically validated, "
+    "could potentially reduce the need for spectacles specifically "
+    "during everyday smartphone reading.\n\n"
+    "This technology is currently under research and development. "
+    "Its ability to provide effective spectacle-free reading has not "
+    "yet been established."
 )
 
 st.markdown("---")
