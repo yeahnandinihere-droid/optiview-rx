@@ -41,7 +41,13 @@ st.info(
     "yet been established."
 )
 
-st.markdown("---")
+st.markdown("""
+## Personalised Reading Preview
+
+### Digital Reading Sample
+
+Clear and comfortable digital reading depends on several factors, including typography, contrast, screen brightness, viewing distance, and individual visual preferences. Personalised reading settings can be explored and evaluated through structured reading assessments. Users should continue to follow their prescribed vision correction and professional eye-care advice.
+""")
 
 
 # ============================================================
