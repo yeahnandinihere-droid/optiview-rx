@@ -3,17 +3,28 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from io import BytesIO
+from xml.sax.saxutils import escape
+from datetime import date
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+)
 
 # ============================================================
 # OPTIVIEW-RX | COMPLETE RESEARCH PROTOTYPE
-# No HTML, CSS, unsafe_allow_html, or external optics.py required.
 # ============================================================
 
 st.set_page_config(
     page_title="OptiView-Rx | Research Prototype",
     page_icon="👁️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
 st.title("👁️ OptiView-Rx")
@@ -23,11 +34,11 @@ st.caption(
 
 st.info(
     "**Research purpose and future vision**\n\n"
-    "OptiView-Rx is an experimental research project investigating whether personalised "
-    "computational optical compensation could eventually support reading on conventional "
-    "smartphones for people with refractive errors. This is a research objective, not an "
-    "established capability. The prototype does not provide spectacle replacement or prove "
-    "spectacle-free reading."
+    "OptiView-Rx is an experimental research project investigating whether "
+    "personalised computational optical compensation could eventually support "
+    "reading on conventional smartphones for people with refractive errors. "
+    "This is a research objective, not an established capability. The prototype "
+    "does not provide spectacle replacement or prove spectacle-free reading."
 )
 
 # ============================================================
@@ -75,7 +86,6 @@ def create_sample_image():
         fill="black",
         font=font
     )
-
     draw.line((35, 65, 860, 65), fill="gray", width=2)
 
     lines = [
@@ -83,11 +93,10 @@ def create_sample_image():
         "Image processing can modify edges and spatial frequencies.",
         "Optical systems influence how displayed images are perceived.",
         "Experimental modelling helps investigate these interactions.",
-        "This example demonstrates generic Gaussian image degradation.",
+        "This example demonstrates generic Gaussian image degradation."
     ]
 
     y = 105
-
     for line in lines:
         draw.text((35, y), line, fill="black", font=font)
         y += 45
@@ -149,13 +158,11 @@ def apply_kernel(image_array, kernel):
     ).real
 
     result = np.clip(result, 0.0, 1.0)
-
     return (result * 255).astype(np.uint8)
 
 
 def sharpness_proxy(image_array):
     arr = image_array.astype(np.float32)
-
     gx = np.diff(arr, axis=1)
     gy = np.diff(arr, axis=0)
 
@@ -168,11 +175,9 @@ def calculate_mtf(kernel):
     spectrum = np.abs(
         np.fft.fftshift(np.fft.fft2(kernel))
     )
-
     spectrum = spectrum / max(float(spectrum.max()), 1e-12)
 
     centre_y, centre_x = np.array(spectrum.shape) // 2
-
     y, x = np.indices(spectrum.shape)
 
     radius = np.sqrt(
@@ -180,7 +185,6 @@ def calculate_mtf(kernel):
     )
 
     bins = np.arange(0, min(spectrum.shape) // 2)
-
     values = []
 
     for index in bins:
@@ -188,20 +192,500 @@ def calculate_mtf(kernel):
             (radius >= index)
             & (radius < index + 1)
         )
-
         values.append(
             float(spectrum[mask].mean())
-            if np.any(mask)
-            else 0.0
+            if np.any(mask) else 0.0
         )
 
     frequencies = bins / float(min(spectrum.shape))
-
     return frequencies, np.asarray(values)
 
 
 # ============================================================
-# 2. BILATERAL PRESCRIPTION INPUTS
+# 2. PDF REPORT HELPER FUNCTIONS
+# ============================================================
+
+def signed_diopters(value):
+    return f"{value:+.2f} D"
+
+
+def eye_interpretation(sphere, cylinder, axis, add):
+
+    if sphere < -0.001:
+        sphere_text = (
+            f"The sphere value is {signed_diopters(sphere)}. A negative sphere "
+            "is commonly used to prescribe correction for myopia (short-sightedness). "
+            "This value alone does not tell us the person's unaided visual acuity."
+        )
+    elif sphere > 0.001:
+        sphere_text = (
+            f"The sphere value is {signed_diopters(sphere)}. A positive sphere "
+            "is commonly used to prescribe correction for hyperopia (long-sightedness). "
+            "This value alone does not tell us the person's unaided visual acuity."
+        )
+    else:
+        sphere_text = (
+            "The sphere value is 0.00 D, so no spherical power is entered for this eye. "
+            "This does not rule out other visual or focusing issues."
+        )
+
+    if abs(cylinder) >= 0.001:
+        cylinder_text = (
+            f"The cylinder value is {signed_diopters(cylinder)}, with an axis of "
+            f"{axis} degrees. Cylinder represents the prescribed amount of "
+            "astigmatic correction; the axis describes its orientation, not its "
+            "severity. The entered cylinder sign convention is preserved."
+        )
+    else:
+        cylinder_text = (
+            "The cylinder value is 0.00 D, so no astigmatic correction is entered "
+            "for this eye. An axis is therefore not applicable."
+        )
+
+    if add > 0.001:
+        add_text = (
+            f"The near addition is +{add:.2f} D. This is an additional lens power "
+            "that may be prescribed for near tasks. It is not, by itself, a measure "
+            "of reading ability."
+        )
+    else:
+        add_text = (
+            "No near addition is entered for this eye (0.00 D). This does not "
+            "establish how comfortably or clearly the person can read at near."
+        )
+
+    return sphere_text, cylinder_text, add_text
+
+
+def build_eye_report_pdf(
+    od_sph, od_cyl, od_axis, od_add, od_se,
+    os_sph, os_cyl, os_axis, os_add, os_se,
+    theme_name, font_size, font_family, line_height,
+    letter_spacing, reading_width, body_contrast, accent_contrast,
+    sample_choice, comfort, difficulty, comments,
+    pupil_diameter, viewing_distance, pixel_pitch
+):
+    """Build a patient-friendly bilateral computational research report."""
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=17 * mm,
+        bottomMargin=17 * mm,
+        title="OptiView-Rx Bilateral Eye Assessment Report",
+        author="OptiView-Rx Research Prototype"
+    )
+
+    styles = getSampleStyleSheet()
+
+    styles.add(ParagraphStyle(
+        name="ReportTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=19,
+        leading=23,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#17365D"),
+        spaceAfter=5
+    ))
+
+    styles.add(ParagraphStyle(
+        name="ReportSubtitle",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#555555"),
+        spaceAfter=12
+    ))
+
+    styles.add(ParagraphStyle(
+        name="SectionHeading",
+        parent=styles["Heading2"],
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor("#17365D"),
+        spaceBefore=10,
+        spaceAfter=6,
+        keepWithNext=True
+    ))
+
+    styles.add(ParagraphStyle(
+        name="ReportBody",
+        parent=styles["BodyText"],
+        fontSize=8.7,
+        leading=12.5,
+        spaceAfter=5
+    ))
+
+    styles.add(ParagraphStyle(
+        name="SmallNote",
+        parent=styles["BodyText"],
+        fontSize=7.5,
+        leading=10,
+        textColor=colors.HexColor("#555555"),
+        spaceAfter=4
+    ))
+
+    styles.add(ParagraphStyle(
+        name="Callout",
+        parent=styles["BodyText"],
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#7A3412"),
+        spaceAfter=3
+    ))
+
+    story = []
+
+    def para(text, style="ReportBody"):
+        story.append(Paragraph(text, styles[style]))
+
+    def section(title):
+        para(escape(title), "SectionHeading")
+
+    def bullet(text):
+        para("&#8226;&nbsp;&nbsp;" + text, "ReportBody")
+
+    story.append(Spacer(1, 3 * mm))
+
+    para("BILATERAL EYE ASSESSMENT REPORT", "ReportTitle")
+
+    para(
+        "OptiView-Rx computational research report — not a clinical diagnosis "
+        "or an eye-care professional's prescription",
+        "ReportSubtitle"
+    )
+
+    meta = [
+        ["Report generated", date.today().strftime("%d %B %Y")],
+        ["Assessment basis", "User-entered spectacle prescription values"],
+        ["Report status", "Exploratory / informational"]
+    ]
+
+    meta_table = Table(meta, colWidths=[42 * mm, 125 * mm])
+
+    meta_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF0F6")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#222222")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C8D2DC")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6)
+    ]))
+
+    story.append(meta_table)
+    story.append(Spacer(1, 7))
+
+    para(
+        "<b>Important:</b> This report interprets the values entered into the "
+        "OptiView-Rx prototype. It does not measure eyesight, diagnose an eye "
+        "condition, verify the prescription, or determine whether spectacles "
+        "can safely be stopped.",
+        "Callout"
+    )
+
+    # Prescription overview
+    section("1. Prescription overview")
+
+    rows = [
+        ["Parameter", "Right eye (OD)", "Left eye (OS)"],
+        ["Sphere", signed_diopters(od_sph), signed_diopters(os_sph)],
+        ["Cylinder", signed_diopters(od_cyl), signed_diopters(os_cyl)],
+        [
+            "Axis",
+            f"{od_axis}°" if abs(od_cyl) >= 0.001 else "Not applicable",
+            f"{os_axis}°" if abs(os_cyl) >= 0.001 else "Not applicable"
+        ],
+        ["Near addition (ADD)", f"+{od_add:.2f} D", f"+{os_add:.2f} D"],
+        ["Spherical equivalent", signed_diopters(od_se), signed_diopters(os_se)]
+    ]
+
+    prescription_table = Table(
+        rows,
+        colWidths=[53 * mm, 57 * mm, 57 * mm],
+        repeatRows=1
+    )
+
+    prescription_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C8D2DC")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+         [colors.white, colors.HexColor("#F5F8FB")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6)
+    ]))
+
+    story.append(prescription_table)
+
+    para(
+        "Spherical equivalent is calculated as sphere + (cylinder ÷ 2). "
+        "It is a simplified numerical summary and does not represent the full "
+        "optical prescription.",
+        "SmallNote"
+    )
+
+    # Right eye
+    section("2. Right eye assessment (OD)")
+
+    od_sphere_text, od_cylinder_text, od_add_text = eye_interpretation(
+        od_sph, od_cyl, od_axis, od_add
+    )
+
+    para("<b>Sphere:</b> " + escape(od_sphere_text))
+    para("<b>Cylinder and axis:</b> " + escape(od_cylinder_text))
+    para("<b>Near addition:</b> " + escape(od_add_text))
+
+    para(
+        f"<b>Calculated spherical equivalent:</b> {od_se:+.2f} D. "
+        "This calculation summarises the entered sphere and cylinder values; "
+        "it does not measure unaided vision."
+    )
+
+    # Left eye
+    section("3. Left eye assessment (OS)")
+
+    os_sphere_text, os_cylinder_text, os_add_text = eye_interpretation(
+        os_sph, os_cyl, os_axis, os_add
+    )
+
+    para("<b>Sphere:</b> " + escape(os_sphere_text))
+    para("<b>Cylinder and axis:</b> " + escape(os_cylinder_text))
+    para("<b>Near addition:</b> " + escape(os_add_text))
+
+    para(
+        f"<b>Calculated spherical equivalent:</b> {os_se:+.2f} D. "
+        "This calculation summarises the entered sphere and cylinder values; "
+        "it does not measure unaided vision."
+    )
+
+    # Bilateral comparison
+    section("4. Comparison of both eyes")
+
+    se_difference = abs(od_se - os_se)
+    cyl_difference = abs(abs(od_cyl) - abs(os_cyl))
+    add_difference = abs(od_add - os_add)
+
+    para(
+        f"The difference between the two spherical-equivalent values is "
+        f"{se_difference:.2f} D. The difference between the absolute cylinder "
+        f"magnitudes is {cyl_difference:.2f} D, and the difference between "
+        f"the entered near additions is {add_difference:.2f} D."
+    )
+
+    para(
+        "The two eyes may have different prescription requirements. These "
+        "numerical differences are descriptive only; they do not, on their own, "
+        "establish whether the difference is clinically significant or how well "
+        "the eyes work together."
+    )
+
+    # Understanding visual correction
+    section("5. Understanding Your Visual Correction")
+
+    para(
+        "<b>1. What your prescription indicates about your vision.</b> "
+        "Sphere and cylinder values describe lens powers prescribed to address "
+        "refractive components. Negative sphere is commonly associated with "
+        "myopic correction, while positive sphere is commonly associated with "
+        "hyperopic correction. Cylinder describes astigmatic correction."
+    )
+
+    para(
+        "<b>2. How spherical power and astigmatism may affect image clarity.</b> "
+        "Refractive error can contribute to blur when the eye is not adequately "
+        "corrected. Astigmatism can cause directional differences in focus. "
+        "The experience varies between individuals and cannot be quantified "
+        "from these values alone."
+    )
+
+    para(
+        "<b>3. Why your right and left eyes may require different corrections.</b> "
+        "Each eye can have a different combination of sphere, cylinder and axis. "
+        "The prescription records those individual requirements; it does not "
+        "by itself describe binocular vision or visual comfort."
+    )
+
+    para(
+        "<b>4. How near-vision addition may influence reading.</b> "
+        "An ADD value is extra lens power prescribed for near tasks when needed. "
+        "It does not independently establish reading speed, reading comfort, "
+        "or the ability to read without spectacles."
+    )
+
+    para(
+        "<b>5. Spectacle-Free Vision Possibility.</b> "
+        "<b>Result: Not determined from prescription data.</b> Sphere, cylinder, "
+        "axis and ADD values alone cannot reliably predict whether you can see "
+        "clearly or read comfortably without spectacles. This report therefore "
+        "does not classify your unaided vision as suitable or unsuitable for "
+        "spectacle-free reading. A qualified eye-care professional must measure "
+        "unaided distance and near visual acuity and assess your actual visual "
+        "function. Do not stop or change prescribed spectacle use based on this "
+        "report."
+    )
+
+    # Digital preferences
+    section("6. Digital reading preferences recorded")
+
+    preference_rows = [
+        ["Setting", "Selected value"],
+        ["Theme", escape(str(theme_name))],
+        ["Font size", f"{font_size}"],
+        ["Font family", escape(str(font_family))],
+        ["Line spacing", f"{line_height:.1f}"],
+        ["Letter spacing", f"{letter_spacing:.1f}"],
+        ["Reading width", f"{reading_width}"],
+        ["Body text contrast", f"{body_contrast:.2f}:1"],
+        ["Accent contrast", f"{accent_contrast:.2f}:1"]
+    ]
+
+    pref_table = Table(
+        preference_rows,
+        colWidths=[65 * mm, 102 * mm]
+    )
+
+    pref_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C8D2DC")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+         [colors.white, colors.HexColor("#F5F8FB")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5)
+    ]))
+
+    story.append(pref_table)
+
+    para(
+        "These are user-selected display preferences, not settings calculated "
+        "from the prescription. Contrast values apply only to the selected "
+        "foreground/background colour combinations and do not evaluate the "
+        "entire interface.",
+        "SmallNote"
+    )
+
+    # Guided reading feedback
+    section("7. Guided reading feedback")
+
+    para(f"<b>Reading sample:</b> {escape(str(sample_choice))}")
+
+    if comfort:
+        para(f"<b>Reported comfort:</b> {escape(str(comfort))}")
+        para(f"<b>Reported difficulty:</b> {escape(str(difficulty))}")
+
+        para(
+            "This feedback is subjective and was recorded within the current "
+            "app session. It is not a standardised reading assessment or "
+            "visual-acuity measurement."
+        )
+    else:
+        para("No reading feedback was submitted during this app session.")
+
+    if comments and str(comments).strip():
+        para("<b>Additional comment:</b> " + escape(str(comments)))
+
+    # Computational research scenario
+    section("8. Computational research scenario")
+
+    para(
+        f"The current simulation scenario records an assumed pupil diameter "
+        f"of {pupil_diameter:.1f} mm, viewing distance of {viewing_distance} mm, "
+        f"and display pixel pitch of {pixel_pitch} µm."
+    )
+
+    para(
+        "The prototype's simplified elliptical Gaussian kernel and image "
+        "processing demonstrations are exploratory mathematical illustrations. "
+        "They are not an individualized eye model, a validated retinal image "
+        "simulation, or a clinically tested correction method. The assumed "
+        "pupil, viewing distance and pixel pitch are scenario inputs and are "
+        "not incorporated into a validated physical eye model."
+    )
+
+    # Limitations
+    section("9. Important limitations and recommended next steps")
+
+    bullet(
+        "This report is based on manually entered prescription values; the "
+        "prototype does not verify the prescription."
+    )
+
+    bullet(
+        "No unaided visual-acuity, refraction, binocular-vision or clinical "
+        "reading test is performed by this app."
+    )
+
+    bullet(
+        "The app does not diagnose eye disease, correct refractive error, "
+        "or replace spectacles or contact lenses."
+    )
+
+    bullet(
+        "Discuss the prescription and any difficulty with reading or seeing "
+        "with a qualified optometrist or ophthalmologist."
+    )
+
+    bullet(
+        "Continue using prescribed vision correction unless your eye-care "
+        "professional advises otherwise."
+    )
+
+    bullet(
+        "Any human research evaluating spectacle-free reading requires "
+        "appropriate research ethics approval and professional oversight."
+    )
+
+    story.append(Spacer(1, 8))
+
+    para(
+        "<b>Research status:</b> OptiView-Rx is an experimental software "
+        "prototype exploring digital reading preferences and simplified "
+        "computational optics. Its long-term spectacle-free reading objective "
+        "has not been established or clinically validated.",
+        "SmallNote"
+    )
+
+    def add_page_number(canvas, document):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#666666"))
+        canvas.drawString(
+            18 * mm, 10 * mm, "OptiView-Rx | Research report"
+        )
+        canvas.drawRightString(
+            A4[0] - 18 * mm,
+            10 * mm,
+            f"Page {document.page}"
+        )
+        canvas.restoreState()
+
+    doc.build(
+        story,
+        onFirstPage=add_page_number,
+        onLaterPages=add_page_number
+    )
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# ============================================================
+# 3. BILATERAL PRESCRIPTION INPUTS
 # ============================================================
 
 st.sidebar.header("📋 Visual Profile")
@@ -217,38 +701,26 @@ od_left, od_right = st.sidebar.columns(2)
 with od_left:
     od_sph = st.number_input(
         "OD Sphere (D)",
-        -20.0,
-        20.0,
-        -2.50,
-        0.25,
+        -20.0, 20.0, -2.50, 0.25,
         format="%.2f"
     )
 
     od_cyl = st.number_input(
         "OD Cylinder (D)",
-        -8.0,
-        8.0,
-        -0.75,
-        0.25,
+        -8.0, 8.0, -0.75, 0.25,
         format="%.2f"
     )
 
 with od_right:
     od_axis = st.number_input(
         "OD Axis (°)",
-        1,
-        180,
-        90,
-        1,
+        1, 180, 90, 1,
         disabled=(abs(od_cyl) < 0.001)
     )
 
     od_add = st.number_input(
         "OD Add (D)",
-        0.0,
-        4.0,
-        0.0,
-        0.25,
+        0.0, 4.0, 0.0, 0.25,
         format="%.2f"
     )
 
@@ -260,38 +732,26 @@ os_left, os_right = st.sidebar.columns(2)
 with os_left:
     os_sph = st.number_input(
         "OS Sphere (D)",
-        -20.0,
-        20.0,
-        -3.00,
-        0.25,
+        -20.0, 20.0, -3.00, 0.25,
         format="%.2f"
     )
 
     os_cyl = st.number_input(
         "OS Cylinder (D)",
-        -8.0,
-        8.0,
-        -1.25,
-        0.25,
+        -8.0, 8.0, -1.25, 0.25,
         format="%.2f"
     )
 
 with os_right:
     os_axis = st.number_input(
         "OS Axis (°)",
-        1,
-        180,
-        95,
-        1,
+        1, 180, 95, 1,
         disabled=(abs(os_cyl) < 0.001)
     )
 
     os_add = st.number_input(
         "OS Add (D)",
-        0.0,
-        4.0,
-        0.0,
-        0.25,
+        0.0, 4.0, 0.0, 0.25,
         format="%.2f"
     )
 
@@ -301,7 +761,7 @@ st.sidebar.caption(
 
 
 # ============================================================
-# 3. PRESCRIPTION SUMMARY
+# 4. PRESCRIPTION SUMMARY
 # ============================================================
 
 st.header("1. Bilateral Prescription Analysis")
@@ -353,7 +813,7 @@ st.caption(
 
 
 # ============================================================
-# 4. DIGITAL READING PREFERENCES
+# 5. DIGITAL READING PREFERENCES
 # ============================================================
 
 st.divider()
@@ -379,7 +839,7 @@ themes = {
         "background": "#FFF7E8",
         "text": "#292524",
         "accent": "#92400E"
-    },
+    }
 }
 
 pref1, pref2 = st.columns(2)
@@ -392,18 +852,12 @@ with pref1:
 
     font_size = st.slider(
         "Font size",
-        14,
-        40,
-        20,
-        1
+        14, 40, 20, 1
     )
 
     line_height = st.slider(
         "Line spacing preference",
-        1.2,
-        2.2,
-        1.6,
-        0.1
+        1.2, 2.2, 1.6, 0.1
     )
 
 with pref2:
@@ -414,18 +868,12 @@ with pref2:
 
     letter_spacing = st.slider(
         "Letter spacing preference",
-        0.0,
-        4.0,
-        0.5,
-        0.1
+        0.0, 4.0, 0.5, 0.1
     )
 
     reading_width = st.slider(
         "Reading width preference",
-        400,
-        1000,
-        720,
-        20
+        400, 1000, 720, 20
     )
 
 selected_theme = themes[theme_name]
@@ -436,7 +884,7 @@ accent_color = selected_theme["accent"]
 
 
 # ============================================================
-# 5. CONTRAST RATIO
+# 6. CONTRAST RATIO
 # ============================================================
 
 st.divider()
@@ -471,7 +919,7 @@ st.caption(
 
 
 # ============================================================
-# 6. GUIDED READING EXPERIENCE
+# 7. GUIDED READING EXPERIENCE
 # ============================================================
 
 st.divider()
@@ -489,7 +937,6 @@ with st.container(border=True):
             "Reading is part of everyday life. We use it to understand "
             "messages, learn new ideas and explore the world around us."
         ),
-
         "Everyday reading": (
             "Clear and comfortable digital reading depends on several "
             "factors, including typography, contrast, screen brightness, "
@@ -497,7 +944,6 @@ with st.container(border=True):
             "Different reading settings may feel more comfortable for "
             "different people."
         ),
-
         "Longer passage": (
             "Digital screens are used for reading throughout the day. "
             "People may read messages, articles, study materials and "
@@ -506,7 +952,7 @@ with st.container(border=True):
             "the distance between the eyes and the screen. Exploring "
             "these settings can help users describe their preferences "
             "and identify which presentation feels easier to read."
-        ),
+        )
     }
 
     sample_choice = st.selectbox(
@@ -591,7 +1037,7 @@ with st.container(border=True):
             "comfort": comfort,
             "difficulty": difficulty,
             "more_samples": more_samples,
-            "comments": comments,
+            "comments": comments
         }
 
         st.success(
@@ -616,7 +1062,7 @@ st.caption(
 
 
 # ============================================================
-# 7. GENERIC IMAGE BLUR DEMONSTRATION
+# 8. GENERIC IMAGE BLUR DEMONSTRATION
 # ============================================================
 
 st.divider()
@@ -630,10 +1076,7 @@ st.warning(
 
 blur_strength = st.slider(
     "Illustrative Gaussian blur strength",
-    0.0,
-    8.0,
-    2.0,
-    0.25
+    0.0, 8.0, 2.0, 0.25
 )
 
 original_image = create_sample_image()
@@ -646,21 +1089,15 @@ img1, img2 = st.columns(2)
 
 with img1:
     st.markdown("**Original image**")
-    st.image(
-        original_image,
-        use_container_width=True
-    )
+    st.image(original_image, use_container_width=True)
 
 with img2:
     st.markdown("**Illustrative blurred image**")
-    st.image(
-        blurred_image,
-        use_container_width=True
-    )
+    st.image(blurred_image, use_container_width=True)
 
 
 # ============================================================
-# 8. COMPUTATIONAL OPTICS EXPLORATION
+# 9. COMPUTATIONAL OPTICS EXPLORATION
 # ============================================================
 
 st.divider()
@@ -698,28 +1135,19 @@ sim1, sim2, sim3 = st.columns(3)
 with sim1:
     pupil_diameter = st.slider(
         "Assumed pupil diameter (mm)",
-        1.5,
-        6.0,
-        3.0,
-        0.1
+        1.5, 6.0, 3.0, 0.1
     )
 
 with sim2:
     viewing_distance = st.slider(
         "Viewing distance (mm)",
-        200,
-        700,
-        400,
-        10
+        200, 700, 400, 10
     )
 
 with sim3:
     pixel_pitch = st.slider(
         "Display pixel pitch (µm)",
-        35,
-        120,
-        55,
-        1
+        35, 120, 55, 1
     )
 
 psf, sigma_a, sigma_b = make_elliptical_psf(
@@ -733,10 +1161,7 @@ source_gray = np.asarray(
     dtype=np.uint8
 )
 
-blurred_array = apply_kernel(
-    source_gray,
-    psf
-)
+blurred_array = apply_kernel(source_gray, psf)
 
 st.subheader("A. Simplified point spread function")
 
@@ -754,7 +1179,6 @@ with detail_col:
     st.write(
         f"Model kernel spread, principal direction 1: **{sigma_a:.2f} pixels**"
     )
-
     st.write(
         f"Model kernel spread, principal direction 2: **{sigma_b:.2f} pixels**"
     )
@@ -797,10 +1221,7 @@ st.caption(
 
 regularization = st.slider(
     "Inverse-filter regularisation",
-    0.001,
-    0.20,
-    0.02,
-    0.001,
+    0.001, 0.20, 0.02, 0.001,
     format="%.3f"
 )
 
@@ -817,7 +1238,6 @@ if run_preemphasis:
     kernel_pad = np.zeros((height, width), dtype=np.float32)
 
     kh, kw = psf.shape
-
     kernel_pad[:kh, :kw] = psf
 
     kernel_pad = np.roll(
@@ -880,7 +1300,8 @@ if run_preemphasis:
     )
 
     st.write(
-        f"Pre-emphasis result sharpness proxy: **{sharpness_proxy(preemphasis_after_blur):.2f}**"
+        f"Pre-emphasis result sharpness proxy: "
+        f"**{sharpness_proxy(preemphasis_after_blur):.2f}**"
     )
 
     st.caption(
@@ -894,11 +1315,7 @@ frequencies, mtf_values = calculate_mtf(psf)
 
 fig, ax = plt.subplots()
 
-ax.plot(
-    frequencies,
-    mtf_values
-)
-
+ax.plot(frequencies, mtf_values)
 ax.set_xlabel("Spatial frequency (cycles/pixel)")
 ax.set_ylabel("Normalised MTF")
 ax.set_ylim(0, 1.05)
@@ -917,7 +1334,7 @@ st.info(
 
 
 # ============================================================
-# 9. RESEARCH ROADMAP
+# 10. RESEARCH ROADMAP
 # ============================================================
 
 st.divider()
@@ -930,18 +1347,15 @@ roadmap = [
     "Evaluate pre-emphasis stability, ringing and noise amplification",
     "Compare model outputs with measured optical bench data",
     "Investigate physical feasibility on conventional displays",
-    "Obtain optometry, ophthalmology and optical engineering review",
+    "Obtain optometry, ophthalmology and optical engineering review"
 ]
 
 for index, item in enumerate(roadmap):
-    st.checkbox(
-        item,
-        key=f"roadmap_{index}"
-    )
+    st.checkbox(item, key=f"roadmap_{index}")
 
 
 # ============================================================
-# 10. SCIENTIFIC LIMITATIONS
+# 11. SCIENTIFIC LIMITATIONS
 # ============================================================
 
 st.divider()
@@ -976,7 +1390,64 @@ st.info(
 
 
 # ============================================================
-# 11. FOOTER
+# 12. DOWNLOADABLE BILATERAL EYE ASSESSMENT REPORT
+# ============================================================
+
+st.divider()
+st.header("9. Bilateral Eye Assessment Report")
+
+st.write(
+    "Generate a downloadable report that explains the entered prescription "
+    "for each eye, compares both eyes, and discusses what can and cannot be "
+    "concluded about spectacle-free reading."
+)
+
+feedback = st.session_state.get("optiview_feedback", {})
+
+pdf_bytes = build_eye_report_pdf(
+    od_sph=od_sph,
+    od_cyl=od_cyl,
+    od_axis=od_axis,
+    od_add=od_add,
+    od_se=od_se,
+    os_sph=os_sph,
+    os_cyl=os_cyl,
+    os_axis=os_axis,
+    os_add=os_add,
+    os_se=os_se,
+    theme_name=theme_name,
+    font_size=font_size,
+    font_family=font_family,
+    line_height=line_height,
+    letter_spacing=letter_spacing,
+    reading_width=reading_width,
+    body_contrast=body_contrast,
+    accent_contrast=accent_contrast,
+    sample_choice=feedback.get("sample", sample_choice),
+    comfort=feedback.get("comfort", ""),
+    difficulty=feedback.get("difficulty", ""),
+    comments=feedback.get("comments", ""),
+    pupil_diameter=pupil_diameter,
+    viewing_distance=viewing_distance,
+    pixel_pitch=pixel_pitch
+)
+
+st.download_button(
+    label="Download Bilateral Eye Assessment Report (PDF)",
+    data=pdf_bytes,
+    file_name="OptiView-Rx_Bilateral_Eye_Assessment_Report.pdf",
+    mime="application/pdf",
+    use_container_width=True
+)
+
+st.caption(
+    "The PDF is a computational research report, not a doctor's diagnosis, "
+    "clinical eye examination, or confirmation that you can read without spectacles."
+)
+
+
+# ============================================================
+# 13. FOOTER
 # ============================================================
 
 st.divider()
