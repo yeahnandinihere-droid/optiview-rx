@@ -111,7 +111,7 @@ It does NOT currently:
 st.info(
     "Future optical modelling must be based on explicit physical "
     "assumptions, validated mathematical models and reproducible "
-    "experimental comparisons. Human testing requires appropriate "
+    "experimental comparisons. Human testing requires appropriate
     "professional oversight and research ethics approval."
 )
 
