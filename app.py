@@ -1,12 +1,13 @@
 
 import streamlit as st
+import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
+from PIL import Image, ImageFilter
 
 
 # ============================================================
 # OPTIVIEW-RX
-# Personalised Computational Vision Research Platform
+# Personalised Computational Vision Research
 # ============================================================
 
 st.set_page_config(
@@ -17,7 +18,7 @@ st.set_page_config(
 
 
 # ============================================================
-# 1. APPLICATION INTRODUCTION
+# 1. INTRODUCTION
 # ============================================================
 
 st.title("OptiView-Rx")
@@ -25,16 +26,15 @@ st.title("OptiView-Rx")
 st.subheader("Personalised Computational Vision Research")
 
 st.write(
-    "An experimental platform exploring personalised vision "
-    "assessment, digital reading accessibility and computational "
-    "optical compensation."
+    "An experimental platform exploring personalised "
+    "computational optical compensation and digital reading accessibility."
 )
 
 st.info(
     "OptiView-Rx investigates whether personalised computational "
-    "methods could eventually support digital reading for people "
-    "with refractive errors. Its ability to provide spectacle-free "
-    "reading has not yet been scientifically established."
+    "optical compensation could eventually support reading on "
+    "conventional smartphones without spectacles. This capability "
+    "has not yet been scientifically established."
 )
 
 st.divider()
@@ -62,10 +62,8 @@ def calculate_contrast_ratio(background, foreground):
         corrected = []
 
         for value in rgb:
-
             if value <= 0.04045:
                 corrected.append(value / 12.92)
-
             else:
                 corrected.append(
                     ((value + 0.055) / 1.055) ** 2.4
@@ -86,15 +84,123 @@ def calculate_contrast_ratio(background, foreground):
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def create_gaussian_psf(size=31, sigma=2.0):
+
+    coordinates = np.arange(size) - size // 2
+    x, y = np.meshgrid(coordinates, coordinates)
+
+    psf = np.exp(
+        -(x**2 + y**2) / (2 * sigma**2)
+    )
+
+    return psf / np.sum(psf)
+
+
+def apply_frequency_filter(image_array, psf):
+
+    image_array = image_array.astype(float) / 255.0
+
+    height, width = image_array.shape
+
+    padded_psf = np.zeros((height, width))
+
+    ph, pw = psf.shape
+
+    padded_psf[:ph, :pw] = psf
+
+    padded_psf = np.roll(
+        padded_psf,
+        (-(ph // 2), -(pw // 2)),
+        axis=(0, 1)
+    )
+
+    image_fft = np.fft.fft2(image_array)
+    psf_fft = np.fft.fft2(padded_psf)
+
+    blurred = np.real(
+        np.fft.ifft2(image_fft * psf_fft)
+    )
+
+    blurred = np.clip(blurred, 0, 1)
+
+    return (blurred * 255).astype(np.uint8)
+
+
+def apply_experimental_preemphasis(
+    image_array,
+    psf,
+    regularization=0.02
+):
+
+    image_array = image_array.astype(float) / 255.0
+
+    height, width = image_array.shape
+
+    padded_psf = np.zeros((height, width))
+
+    ph, pw = psf.shape
+
+    padded_psf[:ph, :pw] = psf
+
+    padded_psf = np.roll(
+        padded_psf,
+        (-(ph // 2), -(pw // 2)),
+        axis=(0, 1)
+    )
+
+    image_fft = np.fft.fft2(image_array)
+    psf_fft = np.fft.fft2(padded_psf)
+
+    inverse_filter = (
+        np.conj(psf_fft)
+        / (np.abs(psf_fft) ** 2 + regularization)
+    )
+
+    corrected = np.real(
+        np.fft.ifft2(image_fft * inverse_filter)
+    )
+
+    corrected = np.clip(corrected, 0, 1)
+
+    return (corrected * 255).astype(np.uint8)
+
+
+def calculate_mtf(psf):
+
+    optical_transfer = np.fft.fft2(psf)
+
+    optical_transfer = np.fft.fftshift(
+        optical_transfer
+    )
+
+    mtf = np.abs(optical_transfer)
+
+    if np.max(mtf) > 0:
+        mtf = mtf / np.max(mtf)
+
+    return mtf
+
+
+def calculate_sharpness(image_array):
+
+    image_array = image_array.astype(float)
+
+    laplacian = (
+        -4 * image_array
+        + np.roll(image_array, 1, axis=0)
+        + np.roll(image_array, -1, axis=0)
+        + np.roll(image_array, 1, axis=1)
+        + np.roll(image_array, -1, axis=1)
+    )
+
+    return float(np.var(laplacian))
+
+
 # ============================================================
 # 3. PERSONALised PRESCRIPTION PROFILE
 # ============================================================
 
 st.header("1. Personalised Prescription Profile")
-
-st.write(
-    "Enter the refractive prescription for the right and left eyes."
-)
 
 left_column, right_column = st.columns(2)
 
@@ -210,21 +316,19 @@ metric3.metric(
 st.subheader("Prescription Summary")
 
 st.write(
-    f"Right eye: Sphere {od_sphere:.2f} D, "
-    f"Cylinder {od_cylinder:.2f} D, "
-    f"Axis {od_axis}°, Add {od_add:.2f} D"
+    f"OD: Sphere {od_sphere:.2f} D | "
+    f"Cylinder {od_cylinder:.2f} D | "
+    f"Axis {od_axis}° | Add {od_add:.2f} D"
 )
 
 st.write(
-    f"Left eye: Sphere {os_sphere:.2f} D, "
-    f"Cylinder {os_cylinder:.2f} D, "
-    f"Axis {os_axis}°, Add {os_add:.2f} D"
+    f"OS: Sphere {os_sphere:.2f} D | "
+    f"Cylinder {os_cylinder:.2f} D | "
+    f"Axis {os_axis}° | Add {os_add:.2f} D"
 )
 
 st.caption(
-    "Spherical equivalent is a simplified calculation. "
-    "It does not fully represent astigmatism, binocular vision "
-    "or the complete optical state of either eye."
+    "Spherical equivalent is a simplified prescription calculation."
 )
 
 
@@ -236,27 +340,18 @@ st.divider()
 
 st.header("3. Digital Reading Accessibility")
 
-st.write(
-    "Configure preferred reading conditions."
-)
-
 col1, col2 = st.columns(2)
 
 with col1:
 
     font_size = st.slider(
         "Preferred Font Size",
-        min_value=12,
-        max_value=40,
-        value=20
+        12, 40, 20
     )
 
     line_spacing = st.slider(
         "Preferred Line Spacing",
-        min_value=1.0,
-        max_value=3.0,
-        value=1.5,
-        step=0.1
+        1.0, 3.0, 1.5, 0.1
     )
 
     reading_width = st.selectbox(
@@ -268,7 +363,7 @@ with col1:
 with col2:
 
     font_family = st.selectbox(
-        "Preferred Font Family",
+        "Font Family",
         ["Default", "Serif", "Sans Serif", "Monospace"]
     )
 
@@ -316,326 +411,306 @@ st.metric(
     f"{contrast_ratio:.2f}:1"
 )
 
-if contrast_ratio >= 7:
-
-    st.success(
-        "Meets WCAG AAA contrast threshold for normal text."
-    )
-
-elif contrast_ratio >= 4.5:
-
-    st.info(
-        "Meets WCAG AA contrast threshold for normal text."
-    )
-
-else:
-
-    st.warning(
-        "Does not meet WCAG AA contrast threshold for normal text."
-    )
-
-st.caption(
-    "This evaluates the selected text and background colours. "
-    "It does not establish overall visual accessibility."
-)
-
 
 # ============================================================
-# 7. PERSONALISED READING ASSESSMENT
+# 7. PERSONALISED READING PREVIEW
 # ============================================================
 
 st.divider()
 
-st.header("5. Personalised Reading Assessment")
+st.header("5. Personalised Reading Preview")
 
 st.write(
-    "Record the user's subjective reading experience under "
-    "their selected digital reading conditions."
+    "Explore a reading sample and review your selected "
+    "reading preferences."
 )
 
-st.subheader("Reading Experience")
+reading_sample = """
+Digital reading is an important part of everyday life.
 
-reading_comfort = st.slider(
-    "How comfortable does reading feel?",
-    min_value=1,
-    max_value=10,
-    value=5,
-    help="1 = Very uncomfortable, 10 = Very comfortable"
-)
+People use smartphones to read messages, articles, books,
+educational materials and medical information.
 
-letter_difficulty = st.slider(
-    "Difficulty identifying letters",
-    min_value=1,
-    max_value=10,
-    value=5,
-    help="1 = No difficulty, 10 = Extreme difficulty"
-)
+OptiView-Rx explores whether personalised computational
+methods could improve digital reading experiences.
+"""
 
-small_text_difficulty = st.slider(
-    "Difficulty reading small text",
-    min_value=1,
-    max_value=10,
-    value=5,
-    help="1 = No difficulty, 10 = Extreme difficulty"
-)
+st.subheader("Digital Reading Sample")
 
-eye_strain = st.slider(
-    "Perceived eye strain",
-    min_value=1,
-    max_value=10,
-    value=5,
-    help="1 = No perceived strain, 10 = Severe perceived strain"
-)
-
-reading_distance = st.number_input(
-    "Usual smartphone reading distance (cm)",
-    min_value=10,
-    max_value=100,
-    value=35
-)
-
-reading_duration = st.number_input(
-    "Typical continuous reading duration (minutes)",
-    min_value=1,
-    max_value=240,
-    value=20
-)
+st.write(reading_sample)
 
 st.caption(
-    "These are self-reported observations, not diagnostic "
-    "measurements."
+    f"Font size: {font_size} | "
+    f"Font family: {font_family} | "
+    f"Line spacing: {line_spacing} | "
+    f"Letter spacing: {letter_spacing} | "
+    f"Reading width: {reading_width} | "
+    f"Theme: {reading_theme}"
 )
 
 
 # ============================================================
-# 8. VISUAL ACUITY AND READING PERFORMANCE
+# 8. VISUAL BLUR SIMULATION
 # ============================================================
 
 st.divider()
 
-st.header("6. Visual Acuity and Reading Performance")
+st.header("6. Visual Blur Simulation")
 
 st.write(
-    "Record available visual acuity measurements and "
-    "reading performance observations."
+    "Explore how different levels of blur affect visual information."
 )
 
-st.subheader("Visual Acuity")
+sample_text = st.text_input(
+    "Enter text for the visual simulation",
+    value="OptiView-Rx Digital Reading"
+)
+
+blur_amount = st.slider(
+    "Blur Intensity",
+    min_value=0.0,
+    max_value=10.0,
+    value=2.0,
+    step=0.5
+)
+
+if sample_text.strip():
+
+    from PIL import ImageDraw, ImageFont
+
+    simulation_image = Image.new(
+        "RGB",
+        (700, 160),
+        "white"
+    )
+
+    draw = ImageDraw.Draw(simulation_image)
+
+    draw.text(
+        (25, 55),
+        sample_text,
+        fill="black"
+    )
+
+    blurred_image = simulation_image.filter(
+        ImageFilter.GaussianBlur(radius=blur_amount)
+    )
+
+    image_col1, image_col2 = st.columns(2)
+
+    with image_col1:
+
+        st.subheader("Original")
+
+        st.image(
+            simulation_image,
+            use_container_width=True
+        )
+
+    with image_col2:
+
+        st.subheader("Blurred")
+
+        st.image(
+            blurred_image,
+            use_container_width=True
+        )
+
+
+# ============================================================
+# 9. COMPUTATIONAL OPTICS ENGINE
+# ============================================================
+
+st.divider()
+
+st.header("7. Computational Optics Engine")
+
+st.write(
+    "Explore simplified optical image degradation and "
+    "experimental computational pre-emphasis."
+)
 
 st.caption(
-    "Enter measurements only if obtained through an appropriate "
-    "visual acuity assessment. Leave the fields empty if unknown."
+    "This is a general image-processing demonstration, "
+    "not a personalised optical correction."
 )
 
-acuity_options = [
-    "Not measured",
-    "6/6",
-    "6/9",
-    "6/12",
-    "6/18",
-    "6/24",
-    "6/36",
-    "6/60",
-    "Other"
+sample_options = [
+    "OptiView-Rx",
+    "Digital Vision Research",
+    "Personalised Reading"
 ]
 
-acuity_col1, acuity_col2 = st.columns(2)
+optics_text = st.selectbox(
+    "Select a sample",
+    sample_options,
+    key="optics_text"
+)
 
-with acuity_col1:
+optics_blur = st.slider(
+    "Optical Blur Sigma",
+    min_value=0.5,
+    max_value=8.0,
+    value=2.0,
+    step=0.5
+)
 
-    od_acuity = st.selectbox(
-        "Right Eye Visual Acuity",
-        acuity_options
+regularization = st.slider(
+    "Pre-emphasis Regularization",
+    min_value=0.001,
+    max_value=0.2,
+    value=0.02,
+    step=0.001,
+    format="%.3f"
+)
+
+# Create text image
+
+from PIL import ImageDraw, ImageFont
+
+optics_image = Image.new(
+    "L",
+    (512, 160),
+    255
+)
+
+draw = ImageDraw.Draw(optics_image)
+
+draw.text(
+    (20, 55),
+    optics_text,
+    fill=0
+)
+
+image_array = np.array(optics_image)
+
+# Create PSF
+
+psf = create_gaussian_psf(
+    size=31,
+    sigma=optics_blur
+)
+
+# Simulated blur
+
+degraded_image = apply_frequency_filter(
+    image_array,
+    psf
+)
+
+# Experimental pre-emphasis
+
+experimental_image = apply_experimental_preemphasis(
+    degraded_image,
+    psf,
+    regularization
+)
+
+result_col1, result_col2, result_col3 = st.columns(3)
+
+with result_col1:
+
+    st.subheader("Original")
+
+    st.image(
+        image_array,
+        use_container_width=True
     )
 
-with acuity_col2:
+with result_col2:
 
-    os_acuity = st.selectbox(
-        "Left Eye Visual Acuity",
-        acuity_options
+    st.subheader("Simulated Blur")
+
+    st.image(
+        degraded_image,
+        use_container_width=True
     )
 
-st.subheader("Reading Performance")
+with result_col3:
 
-reading_speed = st.number_input(
-    "Reading Speed (words per minute)",
-    min_value=0,
-    max_value=2000,
-    value=0,
-    help="Enter 0 if not measured."
-)
+    st.subheader("Experimental Output")
 
-reading_errors = st.number_input(
-    "Number of Reading Errors",
-    min_value=0,
-    max_value=1000,
-    value=0
-)
-
-comprehension_score = st.slider(
-    "Reading Comprehension Score (%)",
-    min_value=0,
-    max_value=100,
-    value=0
-)
-
-st.caption(
-    "Reading speed and comprehension should be measured using "
-    "a consistent passage and testing procedure. A zero value "
-    "means the measurement has not been entered."
-)
-
-
-# ============================================================
-# 9. PERSONALISED VISION RESEARCH DASHBOARD
-# ============================================================
-
-st.divider()
-
-st.header("7. Personalised Vision Research Dashboard")
-
-st.write(
-    "A consolidated overview of the entered prescription, "
-    "reading preferences and reading performance observations."
-)
-
-st.subheader("Prescription Profile")
-
-profile_col1, profile_col2 = st.columns(2)
-
-with profile_col1:
-
-    st.metric(
-        "OD Spherical Equivalent",
-        f"{od_se:.2f} D"
+    st.image(
+        experimental_image,
+        use_container_width=True
     )
 
-    st.write(f"OD Visual Acuity: {od_acuity}")
 
-with profile_col2:
+# Sharpness comparison
 
-    st.metric(
-        "OS Spherical Equivalent",
-        f"{os_se:.2f} D"
-    )
+st.subheader("Image Sharpness Comparison")
 
-    st.write(f"OS Visual Acuity: {os_acuity}")
+original_sharpness = calculate_sharpness(image_array)
 
+blurred_sharpness = calculate_sharpness(degraded_image)
 
-st.subheader("Reading Preferences")
+corrected_sharpness = calculate_sharpness(experimental_image)
 
-preference_data = {
-    "Parameter": [
-        "Font Size",
-        "Font Family",
-        "Line Spacing",
-        "Letter Spacing",
-        "Reading Width",
-        "Reading Theme"
-    ],
-    "Selected Value": [
-        f"{font_size}",
-        font_family,
-        f"{line_spacing}",
-        letter_spacing,
-        reading_width,
-        reading_theme
-    ]
-}
+sharp_col1, sharp_col2, sharp_col3 = st.columns(3)
 
-st.dataframe(
-    pd.DataFrame(preference_data),
-    use_container_width=True,
-    hide_index=True
+sharp_col1.metric(
+    "Original",
+    f"{original_sharpness:.2f}"
+)
+
+sharp_col2.metric(
+    "Blurred",
+    f"{blurred_sharpness:.2f}"
+)
+
+sharp_col3.metric(
+    "Experimental Output",
+    f"{corrected_sharpness:.2f}"
 )
 
 
-st.subheader("Reading Experience")
+# PSF visualisation
 
-experience_col1, experience_col2 = st.columns(2)
+st.subheader("Point Spread Function (PSF)")
 
-experience_col1.metric(
-    "Reading Comfort",
-    f"{reading_comfort}/10"
+fig_psf, ax_psf = plt.subplots()
+
+ax_psf.imshow(
+    psf,
+    cmap="viridis"
 )
 
-experience_col1.metric(
-    "Letter Identification Difficulty",
-    f"{letter_difficulty}/10"
+ax_psf.set_title("Gaussian PSF")
+
+ax_psf.set_xlabel("X")
+ax_psf.set_ylabel("Y")
+
+st.pyplot(fig_psf)
+
+plt.close(fig_psf)
+
+
+# MTF visualisation
+
+st.subheader("Modulation Transfer Function (MTF)")
+
+mtf = calculate_mtf(psf)
+
+fig_mtf, ax_mtf = plt.subplots()
+
+ax_mtf.plot(
+    mtf[mtf.shape[0] // 2, :]
 )
 
-experience_col2.metric(
-    "Small Text Difficulty",
-    f"{small_text_difficulty}/10"
-)
+ax_mtf.set_title("Simplified MTF")
 
-experience_col2.metric(
-    "Perceived Eye Strain",
-    f"{eye_strain}/10"
-)
+ax_mtf.set_xlabel("Spatial Frequency Position")
+ax_mtf.set_ylabel("Normalised MTF")
 
+ax_mtf.grid(True)
 
-st.subheader("Reading Performance")
+st.pyplot(fig_mtf)
 
-performance_col1, performance_col2, performance_col3 = st.columns(3)
-
-performance_col1.metric(
-    "Reading Speed",
-    f"{reading_speed} WPM"
-)
-
-performance_col2.metric(
-    "Reading Errors",
-    f"{reading_errors}"
-)
-
-performance_col3.metric(
-    "Comprehension",
-    f"{comprehension_score}%"
-)
-
-
-st.subheader("Reading Conditions")
-
-st.write(
-    f"Usual reading distance: {reading_distance} cm"
-)
-
-st.write(
-    f"Continuous reading duration: {reading_duration} minutes"
-)
+plt.close(fig_mtf)
 
 
 # ============================================================
-# 10. RESEARCH INTERPRETATION
-# ============================================================
-
-st.divider()
-
-st.header("Research Observations")
-
-st.write(
-    "The dashboard brings together prescription parameters, "
-    "digital reading preferences and self-reported reading "
-    "experiences."
-)
-
-st.write(
-    "These observations can help define future research "
-    "questions about personalised digital reading and "
-    "computational optical compensation."
-)
-
-st.warning(
-    "The dashboard does not calculate a spectacle replacement "
-    "prescription or establish clinical improvement. "
-    "Comparisons require standardised measurements and "
-    "appropriate scientific validation."
-)
-
-
-# ============================================================
-# 11. RESEARCH ROADMAP
+# 10. RESEARCH ROADMAP
 # ============================================================
 
 st.divider()
@@ -644,63 +719,55 @@ st.header("Research Roadmap")
 
 st.markdown(
     """
-    1. Bilateral refractive prescription modelling.
+    1. Personalised refractive prescription modelling.
 
-    2. Personalised digital reading profiles.
+    2. Bilateral optical parameter analysis.
 
-    3. Reading accessibility assessment.
+    3. Digital reading accessibility.
 
-    4. Visual performance data collection.
+    4. Simplified optical modelling.
 
-    5. Individual reading experience analysis.
+    5. Computational image processing.
 
-    6. Development of personalised computational optical models.
+    6. Experimental pre-emphasis development.
 
-    7. Validation against appropriate optical and clinical
-       reference measurements.
+    7. Future scientific and clinical validation.
     """
 )
 
 
 # ============================================================
-# 12. SCIENTIFIC LIMITATIONS
+# 11. RESEARCH INFORMATION
 # ============================================================
 
 st.divider()
 
-st.header("Scientific Limitations")
+st.header("About the Research")
 
-st.markdown(
-    """
-    - Spherical equivalent does not fully represent refractive error.
-    - Subjective reading comfort is not equivalent to visual acuity.
-    - Reading speed depends on language, passage difficulty and
-      testing conditions.
-    - The current application does not model binocular vision.
-    - No validated personalised optical correction is currently
-      implemented.
-    - The platform has not established spectacle-free reading.
-    - It must not be used as a substitute for prescribed spectacles.
-    """
+st.write(
+    "OptiView-Rx brings together refractive prescription "
+    "information, reading preferences and computational "
+    "vision experiments in one platform."
 )
 
-st.info(
-    "Human research requires appropriate institutional approval, "
-    "ethical oversight and professional supervision."
+st.write(
+    "The long-term research direction is to investigate "
+    "whether personalised computational methods can improve "
+    "digital reading for people with refractive errors."
+)
+
+st.caption(
+    "Experimental research prototype. Not intended for diagnosis "
+    "or as a replacement for prescribed spectacles."
 )
 
 
 # ============================================================
-# 13. FOOTER
+# 12. FOOTER
 # ============================================================
 
 st.divider()
 
 st.caption(
     "OptiView-Rx | Personalised Computational Vision Research"
-)
-
-st.caption(
-    "Experimental research prototype. "
-    "Not intended for diagnosis or treatment."
 )
